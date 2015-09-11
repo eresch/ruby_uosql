@@ -4,11 +4,17 @@ require 'socket'
 GREET = 0
 LOGIN = 1
 COMMAND = 2
+ERROR = 3
+ACCDENIED = 6
+ACCGRANTED = 7
 
 PkgType = Hash.new()
 PkgType[GREET] = [0,0,0,0]
 PkgType[LOGIN] = [0,0,0,1]
 PkgType[COMMAND] = [0,0,0,2]
+PkgType[ERROR] = [0,0,0,3]
+PkgType[ACCDENIED] = [0,0,0,6]
+PkgType[ACCGRANTED] = [0,0,0,7]
 
 class Login 
 # """ Doc comments """
@@ -77,33 +83,50 @@ class Connection
         receive_greeting
         puts "send login"
         send_login
+        puts "receive auth status"
+        receive_auth
+    end
+
+    private
+    def receive_auth
+        pkg = @tcp.recv(4)
+        puts "pkg type"
+        arr = pkg.bytes.to_a # array of bytes : pkg type
+        if arr == PkgType[ACCGRANTED]
+            puts "access granted"
+            return
+        elsif arr == PkgType[ACCDENIED]
+            puts "access denied"
+            @tcp.close()
+            return nil
+        elsif arr == PkgType[ERROR]
+            puts "error"
+            read_err
+        else
+            puts "something else"
+        end
+    end
+
+    private
+    def read_err
+        pkg = @tcp.recv(2) # ErrorKind
+        pkg = @tcp.recv(8) # msgsize
+        num = byte_array_to_int(pkg.bytes.to_a)
+        msg = @tcp.recv(num)
+        puts "errormsg: " + msg
     end
 
 
     private
     def send_login
         """ Send login package with username and password """
-        #("puts "send package login [0,0,0,1]"
-        begin
-            count = 0
-            # puts "theoretically [0,0,0,1] is sent"
+        
+        begin      
             @tcp.send([LOGIN].pack("N"),0)
-            count += 4
             @tcp.send([@login.username.length].pack("Q>"), 0)
-            count += 8
-
-            # @tcp.write(@login.username)
             @tcp.send(@login.username,0)
-            count += @login.username.length
             @tcp.send([@login.password.length].pack("Q>"),0)
-            count += 8
-
-
-            #@tcp.write(@login.password)
             @tcp.send(@login.password,0)
-            count += @login.password.length
-            puts count
-            
         rescue => err
             puts "error: ", err
             raise
