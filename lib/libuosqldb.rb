@@ -1,10 +1,14 @@
 # lib for uosql database connection
 require 'socket'
 
+QUIT = 0
+PING = 1
+
 GREET = 0
 LOGIN = 1
 COMMAND = 2
 ERROR = 3
+OK = 4
 ACCDENIED = 6
 ACCGRANTED = 7
 
@@ -13,6 +17,7 @@ PkgType[GREET] = [0,0,0,0]
 PkgType[LOGIN] = [0,0,0,1]
 PkgType[COMMAND] = [0,0,0,2]
 PkgType[ERROR] = [0,0,0,3]
+PkgType[OK] = [0,0,0,4]
 PkgType[ACCDENIED] = [0,0,0,6]
 PkgType[ACCGRANTED] = [0,0,0,7]
 
@@ -120,7 +125,6 @@ class Connection
     private
     def send_login
         """ Send login package with username and password """
-        
         begin      
             @tcp.send([LOGIN].pack("N"),0)
             @tcp.send([@login.username.length].pack("Q>"), 0)
@@ -131,7 +135,6 @@ class Connection
             puts "error: ", err
             raise
         end
-
     end
 
     private
@@ -139,7 +142,6 @@ class Connection
         """Receive the greeting package with version number and a
             message from the server """
         begin
-            
             pkg = @tcp.recv(4)
             puts "pkg type"
             arr = pkg.bytes.to_a # array of bytes : pkg type
@@ -163,19 +165,6 @@ class Connection
             puts e
             raise 
         end
-
-
-    end
-
-    private 
-    def int_to_byte_array(length)
-        """ Convert an integer value to an eight byte array """
-        array = [0,0,0,0,0,0,0,0] # default values
-        for i in 0..7
-            array[i] = length / 256**(7-i)
-            length = length -array[i] * 256**(7-i)
-        end
-        array
     end
 
     private
@@ -189,10 +178,54 @@ class Connection
     end
 
     public
+    def ping
+        @tcp.send([COMMAND].pack("N"),0)
+        @tcp.send([PING].pack("N"),0)
+        pkg = @tcp.recv(4)
+        arr = pkg.bytes.to_a # array of bytes : pkg type
+        if arr == PkgType[OK]
+            puts "ping done"
+        elsif arr == PkgType[ERROR]
+            puts "ping failed, but connection ok"
+        else 
+            puts "unknown package"
+        end
+    end
+
+    public
+    def quit
+        @tcp.send([COMMAND].pack("N"),0)
+        @tcp.send([QUIT].pack("N"),0)
+        pkg = @tcp.recv(4)
+        arr = pkg.bytes.to_a # array of bytes : pkg type
+        if arr == PkgType[OK]
+            puts "close done"
+        elsif arr == PkgType[ERROR]
+            puts "close done, but with error"
+            @tcp.close
+        else 
+            puts "unknown package"
+            @tcp.close
+        end
+    end
+=begin
+    private 
+    def int_to_byte_array(length)
+        """ Convert an integer value to an eight byte array """
+        array = [0,0,0,0,0,0,0,0] # default values
+        for i in 0..7
+            array[i] = length / 256**(7-i)
+            length = length -array[i] * 256**(7-i)
+        end
+        array
+    end
+=end
+    
+
     
 =begin
-        def ping()
-        def quit()
+        
+        
         # @tcp.
         end
         def execute()
@@ -223,4 +256,8 @@ else
     puts "connection failed"
 end
 
+conn.ping
+
+conn.ping
+conn.quit
 
