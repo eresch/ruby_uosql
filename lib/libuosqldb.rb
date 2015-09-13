@@ -202,24 +202,129 @@ class Connection
     def execute(query)
         """ Send query to the server and receive response. Return ResultSet if
             query was successful, else nil. """
+        begin
             # send the pkgtype
-            # @tcp.send([@@pkgtype[:commands]].pack("N"), 0)
+            @tcp.send([@@pkgtype[:commands]].pack("N"), 0)
 
             # send the query structure
-    end
-=begin
-    private 
-    def int_to_byte_array(length)
-        """ Convert an integer value to an eight byte array """
-        array = [0, 0, 0, 0, 0, 0, 0, 0] # default values
-        for i in 0..7
-            array[i] = length / 256**(7-i)
-            length = length -array[i] * 256**(7-i)
+            # four bytes for query command
+            @tcp.send([@@command[:query]].pack("N"), 0)
+            # size of query string
+            @tcp.send([query.length].pack("Q>"), 0)
+            # query string
+            @tcp.send(query, 0)
+
+            # response with result
+            pkg = @tcp.recv(4)
+       
+            arr = pkg.bytes.to_a.pack("C*").unpack("N").first
+            if arr == @@pkgtype[:response]
+                # read the sent data
+                read_data
+            elsif arr == @@pkgtype[:error]
+                read_err
+                nil
+            else
+                @errormessage = {errorkind: 1, 
+                                 message: "Unexpected package received."}
+                nil
+            end
+        rescue => e
+            nil
         end
-        array
     end
-=end
+
+    private
+    def read_data
+        """ Receive Rows object. """
+        # first 8 bytes mean the bytes number of data
+        data_size = @tcp.recv(8)
+        size = byte_array_to_int(data_size.bytes.to_a)
+        # subsequent data
+        data = @tcp.recv(size)
+        data = data.bytes.to_a # convert to byte array
+        puts "data: #{data}"
+
+        # next 8 bytes mean the number of columns
+        columns_num = @tcp.recv(8)
+        num = byte_array_to_int(columns_num.bytes.to_a)
+        puts "num of columns: #{num}"
+        # subsequent columns
+        col_arr = Array.new
+        for i in 0...num
+            # size of name string
+            name_size = @tcp.recv(8)
+            size = byte_array_to_int(name_size.bytes.to_a)
+            # name string
+            name = @tcp.recv(size)
+            puts "col: #{i}\nname: #{name}"
+
+            # SqlType 4 bytes for Int and Bool, Char has an additional 
+            # following byte, VarChar has two additional following bytes
+            sql_type = @tcp.recv(4)
+            sql_type = sql_type.bytes.to_a.pack("C*").unpack("N").first
+            if sql_type == 0 # Int
+                puts "SqlType::Int"
+            elsif sql_type == 1 # Bool
+                puts "SqlType::Bool"
+            elsif sql_type == 2 # Char(u8)
+                size = @tcp.recv(1).bytes.to_a.first
+                puts "SqlType::Char(#{size})"
+            elsif sql_type == 3 # VarChar(u16)
+                size = @tcp.recv(2).bytes.to_a.pack("C*").unpack("n").first
+                puts "SqlType::VarChar(#{size})"
+            end
+            # one byte for is_primary_key  
+            is_prim = @tcp.recv(1).bytes.to_a.first
+            if is_prim == 0 # false
+                puts "is_prim: false"
+            else
+                puts "is_prim: true"
+            end
+
+            # one byte for allow_null
+            allow_null = @tcp.recv(1).bytes.to_a.first
+            if allow_null == 0 # false
+                puts "is_prim: false"
+            else
+                puts "is_prim: true"
+            end
+
+            # 8 bytes for the description string size
+            descr_size = @tcp.recv(8)
+            size = byte_array_to_int(descr_size.bytes.to_a)
+            # name string
+            descr = @tcp.recv(size)
+            puts "descr: #{descr}"
+
+            # add column to the array
+            column = Column.new name, sql_type,is_prim, allow_null, descr
+            col_arr << column
+        end
+
+        ResultSet.new data, col_arr
+    end
 end
+
+class ResultSet
+
+    def initialize (data, columns)
+        @data = data
+        @columns = columns
+    end
+end
+
+class Column 
+
+    def initialize (name, sql_type, is_primary_key, allow_null, description)
+        @name = name
+        @sql_type = sql_type
+        @is_primary_key = is_primary_key
+        @allow_null = allow_null
+        @description = description
+    end
+end
+
 ##################### Tests ##########################################
 
 =begin
@@ -235,6 +340,12 @@ if conn.class == Connection
         puts "ping failed"
     end
     
+    results = conn.execute "select * from test"
+    if results === nil
+        puts "execute failed"
+    else
+        puts "Received results"
+    end
     if conn.quit
         puts "quit successful."
     else
