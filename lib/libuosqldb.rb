@@ -243,12 +243,12 @@ class Connection
         # subsequent data
         data = @tcp.recv(size)
         data = data.bytes.to_a # convert to byte array
-        puts "data: #{data}"
+        # puts "data: #{data}"
 
         # next 8 bytes mean the number of columns
         columns_num = @tcp.recv(8)
         num = byte_array_to_int(columns_num.bytes.to_a)
-        puts "num of columns: #{num}"
+        # puts "num of columns: #{num}"
         # subsequent columns
         col_arr = Array.new
         for i in 0...num
@@ -257,37 +257,37 @@ class Connection
             size = byte_array_to_int(name_size.bytes.to_a)
             # name string
             name = @tcp.recv(size)
-            puts "col: #{i}\nname: #{name}"
+            # puts "col: #{i}\nname: #{name}"
 
             # SqlType 4 bytes for Int and Bool, Char has an additional 
             # following byte, VarChar has two additional following bytes
             sql_type = @tcp.recv(4)
             sql_type = sql_type.bytes.to_a.pack("C*").unpack("N").first
             if sql_type == 0 # Int
-                puts "SqlType::Int"
+                # puts "SqlType::Int"
             elsif sql_type == 1 # Bool
-                puts "SqlType::Bool"
+                # puts "SqlType::Bool"
             elsif sql_type == 2 # Char(u8)
                 size = @tcp.recv(1).bytes.to_a.first
-                puts "SqlType::Char(#{size})"
+                # puts "SqlType::Char(#{size})"
             elsif sql_type == 3 # VarChar(u16)
                 size = @tcp.recv(2).bytes.to_a.pack("C*").unpack("n").first
-                puts "SqlType::VarChar(#{size})"
+                # puts "SqlType::VarChar(#{size})"
             end
             # one byte for is_primary_key  
             is_prim = @tcp.recv(1).bytes.to_a.first
             if is_prim == 0 # false
-                puts "is_prim: false"
+                # puts "is_prim: false"
             else
-                puts "is_prim: true"
+                # puts "is_prim: true"
             end
 
             # one byte for allow_null
             allow_null = @tcp.recv(1).bytes.to_a.first
             if allow_null == 0 # false
-                puts "is_prim: false"
+                # puts "allow_null: false"
             else
-                puts "is_prim: true"
+                # puts "allow_null: true"
             end
 
             # 8 bytes for the description string size
@@ -295,7 +295,7 @@ class Connection
             size = byte_array_to_int(descr_size.bytes.to_a)
             # name string
             descr = @tcp.recv(size)
-            puts "descr: #{descr}"
+            # puts "descr: #{descr}"
 
             # add column to the array
             column = Column.new name, sql_type,is_prim, allow_null, descr
@@ -305,15 +305,99 @@ class Connection
         ResultSet.new data, col_arr
     end
 end
-
+################################################################################
 class ResultSet
 
     def initialize (data, columns)
-        @data = data
+        @data = data                     # array of byte values        
+        @metadata= MetaData.new columns  # array of Columns
+    end
+
+    public
+    def get_col_cnt
+        """ Return the number of columns in this ResultSet. """
+        @metadata.get_col_cnt
+    end
+
+    public
+    def get_col_name idx
+        """ Return Column name at specified index, 
+            nil if index is out of range. """
+        @metadata.get_col_name idx
+    end
+
+    public
+    def get_col_type_by_idx idx
+        """ Return column type at specified index, 
+            nil if index is out of range. """
+        @metadata.get_col_type idx
+    end
+
+    public 
+    def get_col_idx name
+        """ Return column idx with specified name, 
+            nil if no column with specified name is in the ResultSet."""
+        @metadata.get_col_idx name
+    end
+
+
+
+end
+################################################################################
+class MetaData
+
+    def initialize columns
         @columns = columns
     end
-end
 
+    public
+    def get_col_cnt
+        """ Return number of columns. """
+        @columns.length
+    end
+
+    public 
+    def get_col_name idx
+        """ Return Column name at specified index, nil if index is out of range. """
+        if idx >= @columns.length || idx < 0
+            nil
+        else
+            @columns[idx].get_name
+        end
+    end
+
+    public
+    def get_col_type_by_idx idx
+        """ Return Column type at specified index, nil if index is out of range. """
+        if idx >= @columns.length || idx < 0
+            nil
+        else
+            @columns[idx].get_sql_type
+        end
+    end
+
+
+
+    public 
+    def get_col_idx name
+        """ Return column with specified name, nil if no column with specified
+            name is in the ResultSet."""
+        @columns.each_index do |idx|
+            if @columns[idx].get_name == name 
+                return idx
+            end
+        end
+        nil
+    end
+    
+    public
+    def get_col_type_by_name name
+        """ Return column type with specified name, nil if no column with 
+            specified name is in the ResultSet """
+        
+    end 
+end
+################################################################################
 class Column 
 
     def initialize (name, sql_type, is_primary_key, allow_null, description)
@@ -323,33 +407,72 @@ class Column
         @allow_null = allow_null
         @description = description
     end
+
+    public
+    def get_name
+        @name
+    end
+
+    public
+    def get_sql_type
+        @sql_type
+    end
+
+    public
+    def get_is_primary_key
+        @is_primary_key
+    end
+
+    public 
+    def get_allow_null
+        @allow_null
+    end
+
+    public 
+    def get_description
+        @description
+    end
 end
 
 ##################### Tests ##########################################
-
-=begin
-=end
 conn = connect("127.0.0.1", 4242, "con", "nect")
 if conn.class == Connection
     puts "Versionsnr: #{conn.get_version}. Authenticated as #{conn.get_username}"
-    puts "#{conn.get_greeting_msg}"
+    puts "#{conn.get_greeting_msg}\n\n"
     
-    if conn.ping 
-        puts "ping done"
-    else 
-        puts "ping failed"
-    end
+    # if conn.ping 
+    #     puts "ping done"
+    # else 
+    #     puts "ping failed"
+    # end
     
     results = conn.execute "select * from test"
     if results === nil
-        puts "execute failed"
+        puts "execute failed\n\n"
     else
-        puts "Received results"
+        puts "Received results!!!!!\n\ncolumns cnt: #{results.get_col_cnt}\n\n"
+        puts "column name at 0: '#{results.get_col_name 0}'\n\n"
+        
+        idx = results.get_col_idx "error occurred"
+        if  idx === nil
+            puts "no index for 'error occurred' found.\n\n"
+        else
+            puts "column idx of 'error occurred': '#{idx}'\n\n"
+        end
+
+        idx = results.get_col_idx "err" 
+        if idx === nil
+            puts "OK: no index for 'err' found.\n\n"
+        else
+            puts "column idx of 'err': '#{idx}'\n\n"
+        end    
+
     end
+
     if conn.quit
-        puts "quit successful."
+        puts "quit successful.\n\n"
     else
-        puts "quit failed."
+        puts "quit failed.\n\n"
     end
 
 else
