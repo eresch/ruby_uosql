@@ -243,12 +243,10 @@ class Connection
         # subsequent data
         data = @tcp.recv(size)
         data = data.bytes.to_a # convert to byte array
-        # puts "data: #{data}"
 
         # next 8 bytes mean the number of columns
         columns_num = @tcp.recv(8)
         num = byte_array_to_int(columns_num.bytes.to_a)
-        # puts "num of columns: #{num}"
         # subsequent columns
         col_arr = Array.new
         for i in 0...num
@@ -257,37 +255,36 @@ class Connection
             size = byte_array_to_int(name_size.bytes.to_a)
             # name string
             name = @tcp.recv(size)
-            # puts "col: #{i}\nname: #{name}"
 
             # SqlType 4 bytes for Int and Bool, Char has an additional 
             # following byte, VarChar has two additional following bytes
             sql_type = @tcp.recv(4)
             sql_type = sql_type.bytes.to_a.pack("C*").unpack("N").first
             if sql_type == 0 # Int
-                # puts "SqlType::Int"
+                sql_type = Int.new
             elsif sql_type == 1 # Bool
-                # puts "SqlType::Bool"
+                sql_type = Bool.new
             elsif sql_type == 2 # Char(u8)
                 size = @tcp.recv(1).bytes.to_a.first
-                # puts "SqlType::Char(#{size})"
+                sql_type = Char.new size
             elsif sql_type == 3 # VarChar(u16)
                 size = @tcp.recv(2).bytes.to_a.pack("C*").unpack("n").first
-                # puts "SqlType::VarChar(#{size})"
+                sql_type = VarChar.new size
             end
             # one byte for is_primary_key  
             is_prim = @tcp.recv(1).bytes.to_a.first
             if is_prim == 0 # false
-                # puts "is_prim: false"
+                is_prim = false
             else
-                # puts "is_prim: true"
+                is_prim = true
             end
 
             # one byte for allow_null
             allow_null = @tcp.recv(1).bytes.to_a.first
             if allow_null == 0 # false
-                # puts "allow_null: false"
+                allow_null = false
             else
-                # puts "allow_null: true"
+                allow_null = true
             end
 
             # 8 bytes for the description string size
@@ -295,7 +292,6 @@ class Connection
             size = byte_array_to_int(descr_size.bytes.to_a)
             # name string
             descr = @tcp.recv(size)
-            # puts "descr: #{descr}"
 
             # add column to the array
             column = Column.new name, sql_type,is_prim, allow_null, descr
@@ -304,13 +300,45 @@ class Connection
 
         ResultSet.new data, col_arr
     end
+
 end
 ################################################################################
 class ResultSet
 
     def initialize (data, columns)
-        @data = data                     # array of byte values        
-        @metadata= MetaData.new columns  # array of Columns
+        @metadata= MetaData.new columns         # array of Columns
+        @current_line = -1                      # actual line position start = 0
+        @line_size = @metadata.get_line_size    # size of line through all columns
+        puts "#{data}"
+        preprocess_data data
+    end
+
+    public
+    def preprocess_data data
+        col_count = @metadata.get_col_cnt                  # amount of columns
+        @line_count = data.length / @metadata.get_line_size
+
+        process_data = Array.new col_count
+
+        for i in 0..(col_count -1)
+            process_data[i] = Array.new @line_count
+        end
+        arr = Array.new
+        for i in 0..(col_count -1)
+            size = (@metadata.get_col_type i).size
+            arr << size
+        end
+
+        pos = 0
+        for i in 0..(@line_count -1)
+            for j in 0..(col_count -1)
+                column_size = arr[j]
+                process_data[j][i] =  data[pos..(pos+column_size-1)]
+                pos += (column_size)
+            end
+        end
+        @data = process_data
+
     end
 
     public
@@ -327,9 +355,9 @@ class ResultSet
     end
 
     public
-    def get_col_type_by_idx idx
-        """ Return column type at specified index, 
-            nil if index is out of range. """
+    def get_col_type idx
+        """ Return Column type at specified index or with specified name,
+            nil if index is out of range or name not in ResultSet. """
         @metadata.get_col_type idx
     end
 
@@ -340,7 +368,172 @@ class ResultSet
         @metadata.get_col_idx name
     end
 
+    public 
+    def get_col_is_primary column
+        """ Return boolean if values are primary keys in the column at specified
+            index or with specified name, nil if no column with specified name 
+            is in the ResultSet or index out of bounds. """
+        @metadata.get_col_is_primary column
+    end
 
+    public
+    def get_col_allow_null column
+        """ Return boolean if null values are allowed in the column at specified
+            index or with specified name, nil if no column with specified name 
+            is in the ResultSet or index out of bounds. """
+        @metadata.get_col_allow_null column
+    end
+
+    public 
+    def get_col_description column
+        """ Return description of column at specified index or with specified 
+            name, nil if no column with specified name is in the ResultSet or
+            index out of bounds. """
+        @metadata.get_col_description column
+    end
+
+    public
+    def nextInt column 
+        if column.class == Fixnum
+            if column >= @metadata.get_col_cnt || column < 0
+                return nil
+            else
+                col = @metadata.get_col_type column
+                if col.class != Int
+                    return nil
+                else
+                    data = @data[column][@current_line]
+                    if data.nil?
+                        return nil
+                    else
+                        return data.pack("C*").unpack("N").first
+                    end
+                end
+            end
+        elsif column.class == String
+            idx = get_col_idx column
+            if idx.nil?
+                return nil
+            else
+                return nextInt idx
+            end
+        end
+        nil
+    end
+
+
+    public
+    def nextBool column
+        if column.class == Fixnum
+            if column >= @metadata.get_col_cnt || column < 0
+                return nil
+            else
+                col = @metadata.get_col_type column
+                if col.class != Bool
+                    return nil
+                else
+                    data = @data[column][@current_line]
+                    if data.nil?
+                        return nil
+                    else
+                        if data.first == 0
+                            return false
+                        else
+                            return true
+                        end
+                    end
+                end
+            end
+        elsif column.class == String
+            idx = get_col_idx column
+            if idx.nil?
+                return nil
+            else
+                return nextBool idx
+            end
+        end
+        nil
+    end
+
+
+    public 
+    def nextChar column
+        if column.class == Fixnum
+            if column >= @metadata.get_col_cnt || column < 0
+                return nil
+            else
+                col = @metadata.get_col_type column
+                if col.class != Char
+                    return nil
+                else
+                    data = @data[column][@current_line]
+                    if data.nil?
+                        return nil
+                    else
+                        return data.pack("c*")
+                    end
+                end
+            end
+        elsif column.class == String
+            idx = get_col_idx column
+            if idx.nil?
+                return nil
+            else
+                return nextChar idx
+            end
+        end
+        nil
+    end
+
+    public 
+    def nextVarChar column
+        if column.class == Fixnum
+            if column >= @metadata.get_col_cnt || column < 0
+                return nil
+            else
+                col = @metadata.get_col_type column
+                if col.class != Char
+                    return nil
+                else
+                    data = @data[column][@current_line]
+                    if data.nil?
+                        return nil
+                    else
+                        return data.pack("c*")
+                    end
+                    
+                end
+            end
+        elsif column.class == String
+            idx = get_col_idx column
+            if idx.nil?
+                return nil
+            else
+                return nextChar idx
+            end
+        end
+        nil
+    end
+
+    public 
+    def next
+        if (@current_line + 1) == @line_count
+            return false
+        else
+            @current_line += 1
+            return true
+        end
+    end
+
+    public 
+    def previous
+        if @current_line == 0
+            return false
+        else
+            @current_line -= 1
+            return true
+        end
+    end
 
 end
 ################################################################################
@@ -348,6 +541,13 @@ class MetaData
 
     def initialize columns
         @columns = columns
+    end
+
+    public 
+    def get_line_size
+        line_size = 0
+        @columns.each {|elem| line_size += (elem.get_sql_type).size}
+        line_size
     end
 
     public
@@ -366,18 +566,6 @@ class MetaData
         end
     end
 
-    public
-    def get_col_type_by_idx idx
-        """ Return Column type at specified index, nil if index is out of range. """
-        if idx >= @columns.length || idx < 0
-            nil
-        else
-            @columns[idx].get_sql_type
-        end
-    end
-
-
-
     public 
     def get_col_idx name
         """ Return column with specified name, nil if no column with specified
@@ -389,13 +577,93 @@ class MetaData
         end
         nil
     end
-    
+
     public
-    def get_col_type_by_name name
-        """ Return column type with specified name, nil if no column with 
-            specified name is in the ResultSet """
-        
-    end 
+    def get_col_type column
+        """ Return Column type at specified index or with specified name,
+            nil if index is out of range or name not in ResultSet. """
+        if column.class == Fixnum
+            if column >= @columns.length || column < 0
+                nil
+            else
+                return @columns[column].get_sql_type
+            end
+        elsif column.class == String
+            @columns.each do |elem|
+                if elem.get_name == name
+                    return elem.get_sql_type
+                end
+            end
+            nil
+        end
+        nil
+    end
+
+    public 
+    def get_col_is_primary column
+        """ Return boolean if values are primary keys in the column at specified
+            index or with specified name, nil if no column with specified name 
+            is in the ResultSet or index out of bounds. """
+        if column.class == Fixnum
+            if column >= @columns.length || column < 0
+                nil
+            else
+                return @columns[column].get_is_primary_key
+            end
+        elsif column.class == String
+            @columns.each do |elem|
+                if elem.get_name == column
+                    return elem.get_is_primary_key
+                end
+            end
+            nil
+        end
+        nil
+    end
+
+    public
+    def get_col_allow_null column
+        """ Return boolean if null values are allowed in the column at specified
+            index or with specified name, nil if no column with specified name 
+            is in the ResultSet or index out of bounds. """
+        if column.class == Fixnum
+            if column >= @columns.length || column < 0
+                nil
+            else
+                return @columns[column].get_allow_null
+            end
+        elsif column.class == String
+            @columns.each do |elem|
+                if elem.get_name == column
+                    return elem.get_allow_null
+                end
+            end
+            nil
+        end
+        nil
+    end
+
+    public 
+    def get_col_description column
+        """ Return description of column at specified index or with specified 
+            name, nil if no column with specified name is in the ResultSet or
+            index out of bounds. """
+        if column.class == Fixnum
+            if column >= @columns.length || column < 0
+                nil
+            else
+                return @columns[column].get_description
+            end
+        elsif column.class == String
+            @columns.each do |elem|
+                if elem.get_name == column
+                    return elem.get_description
+                end
+            end
+            nil
+        end
+        nil
+    end
 end
 ################################################################################
 class Column 
@@ -433,6 +701,62 @@ class Column
         @description
     end
 end
+################################################################################
+class SqlType
+
+    public
+    def size
+        @size
+    end
+end
+################################################################################
+class Int < SqlType
+
+    def initialize 
+        @size = 4
+    end
+
+    public
+    def to_s
+        "Int"
+    end
+end
+
+class Bool < SqlType
+
+    def initialize
+        @size = 1
+    end
+
+    public
+    def to_s
+        "Bool"
+    end
+end
+
+class Char < SqlType
+
+    def initialize size
+        @size = size + 1
+    end
+
+    public
+    def to_s
+        "Char"
+    end
+end
+
+class VarChar < SqlType
+
+    def initialize size
+        @size = size + 2
+    end
+
+    public
+    def to_s
+        "VarChar"
+    end
+end
 
 ##################### Tests ##########################################
 conn = connect("127.0.0.1", 4242, "con", "nect")
@@ -440,39 +764,65 @@ if conn.class == Connection
     puts "Versionsnr: #{conn.get_version}. Authenticated as #{conn.get_username}"
     puts "#{conn.get_greeting_msg}\n\n"
     
-    # if conn.ping 
-    #     puts "ping done"
-    # else 
-    #     puts "ping failed"
-    # end
+    if conn.ping 
+        puts "ping done\n\n"
+    else 
+        puts "ping failed\n\n"
+    end
     
     results = conn.execute "select * from test"
-    if results === nil
+    if results.nil?
         puts "execute failed\n\n"
     else
-        puts "Received results!!!!!\n\ncolumns cnt: #{results.get_col_cnt}\n\n"
+        puts "Received results!!!!!\n\n"
+=begin
         puts "column name at 0: '#{results.get_col_name 0}'\n\n"
         
         idx = results.get_col_idx "error occurred"
-        if  idx === nil
-            puts "no index for 'error occurred' found.\n\n"
+        if  idx.nil?
+            puts "Failed: no index for 'error occurred' found.\n\n"
         else
-            puts "column idx of 'error occurred': '#{idx}'\n\n"
+            puts "OK: column idx of 'error occurred': '#{idx}'\n\n"
         end
 
-        idx = results.get_col_idx "err" 
-        if idx === nil
-            puts "OK: no index for 'err' found.\n\n"
+        is_prim = results.get_col_is_primary "error occurred"
+        if is_prim.nil?
+            puts "Failed: nil value for is_prim\n\n"
         else
-            puts "column idx of 'err': '#{idx}'\n\n"
-        end    
+            puts "OK: value is_primary_key: '#{is_prim}'\n\n"
+        end
 
+        is_prim = results.get_col_is_primary "err"
+        if is_prim.nil?
+            puts "OK: no column named 'err' in ResultSet.\n\n"
+        else
+           puts "Failed: get_col_is_primary_by_name failed\n\n"
+        end
+
+        allow_null = results.get_col_allow_null 0
+        if allow_null.nil?
+            puts "Failed: nil value for allow null\n\n"
+        else
+            puts "Ok: value allow null: '#{allow_null}'\n\n"
+        end
+
+        type = results.get_col_type 0
+        if type.nil?
+            puts "Failed: type nil\n\n"
+        else
+            puts "OK: Columntype: #{type}\n\n"
+        end
+=end
+        while results.next
+            puts " #{results.nextInt 0}, #{results.nextBool "something"}, #{results.nextChar 2}"
+        end
     end
+    
 
     if conn.quit
-        puts "quit successful.\n\n"
+        puts "\nquit successful.\n\n"
     else
-        puts "quit failed.\n\n"
+        puts "Failed: quit failed.\n\n"
     end
 
 else
