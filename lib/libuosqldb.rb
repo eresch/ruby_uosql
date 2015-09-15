@@ -309,11 +309,9 @@ class ResultSet
         @metadata= MetaData.new columns         # array of Columns
         @current_line = -1                      # actual line position start = 0
         @line_size = @metadata.get_line_size    # size of line through all columns
-        puts "#{data}"
-        preprocess_data data
+        preprocess_data data                    # preprocess of data
     end
 
-    public
     def preprocess_data data
         col_count = @metadata.get_col_cnt                  # amount of columns
         @line_count = data.length / @metadata.get_line_size
@@ -393,7 +391,10 @@ class ResultSet
     end
 
     public
-    def nextInt column 
+    def nextInt column
+        """ Return the integer value of the specified column (index or name). 
+            Return nil if index is out of bounds or column name is not in the
+            ResultSet. """
         if column.class == Fixnum
             if column >= @metadata.get_col_cnt || column < 0
                 return nil
@@ -424,6 +425,9 @@ class ResultSet
 
     public
     def nextBool column
+        """ Return the boolean value of the specified column (index or name). 
+            Return nil if index is out of bounds or column name is not in the
+            ResultSet. """
         if column.class == Fixnum
             if column >= @metadata.get_col_cnt || column < 0
                 return nil
@@ -456,8 +460,11 @@ class ResultSet
     end
 
 
-    public 
+    public
     def nextChar column
+        """ Return the string value of the specified column (index or name). 
+            Return nil if index is out of bounds or column name is not in the
+            ResultSet. """
         if column.class == Fixnum
             if column >= @metadata.get_col_cnt || column < 0
                 return nil
@@ -485,8 +492,11 @@ class ResultSet
         nil
     end
 
-    public 
+    public
     def nextVarChar column
+        """ Return the string value of the specified column (index or name). 
+            Return nil if index is out of bounds or column name is not in the
+            ResultSet. """
         if column.class == Fixnum
             if column >= @metadata.get_col_cnt || column < 0
                 return nil
@@ -515,8 +525,10 @@ class ResultSet
         nil
     end
 
-    public 
+    public
     def next
+        """ Move the cursor to the next line. Must be called before the values 
+            can be returned. """
         if (@current_line + 1) == @line_count
             return false
         else
@@ -525,14 +537,30 @@ class ResultSet
         end
     end
 
-    public 
+    public
     def previous
+        """ Move the cursor to the previous line. Must be called before the 
+            values can be returned. """
         if @current_line == 0
             return false
         else
             @current_line -= 1
             return true
         end
+    end
+
+    public
+    def first
+        """ Set the cursor before the first line.
+            Call next before getting values. """
+        @current_line = -1
+    end
+
+    public
+    def last
+        """ Set the cursor after the last line.
+            Call previous before getting values. """
+        @current_line = @line_count
     end
 
 end
@@ -775,9 +803,8 @@ if conn.class == Connection
         puts "execute failed\n\n"
     else
         puts "Received results!!!!!\n\n"
-=begin
         puts "column name at 0: '#{results.get_col_name 0}'\n\n"
-        
+=begin
         idx = results.get_col_idx "error occurred"
         if  idx.nil?
             puts "Failed: no index for 'error occurred' found.\n\n"
